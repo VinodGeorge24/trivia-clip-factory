@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tiktok-trivia-factory"
+version = "0.1.0"
+description = "Telegram-operated TikTok trivia content factory"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "imageio-ffmpeg>=0.5.1",
+    "Pillow>=10.0.0",
+]
+
+[project.scripts]
+trivia-factory = "tiktok_trivia_factory.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

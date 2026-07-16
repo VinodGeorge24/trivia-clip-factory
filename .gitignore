@@ -1,0 +1,40 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg-info/**
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Local runtime state
+var/
+artifacts/
+*.sqlite
+*.sqlite3
+*.db
+
+# Local agent/workspace notes that should not be published with the product repo
+AGENTS.md
+SOUL.md
+USER.md
+IDENTITY.md
+HEARTBEAT.md
+TOOLS.md
+openclaw-workspace-state.json
+redundant_mistakes.md
+
+# Scratch research/question-bank material until Phase 10 formalizes storage
+trivia-inspiration.txt
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
