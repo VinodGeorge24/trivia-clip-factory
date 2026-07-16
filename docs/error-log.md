@@ -149,3 +149,20 @@ teaches us something useful.
   last-resort fallbacks.
 - **Prevention:** New research providers should be additive, cite their sources,
   and fail before moving an idea to active.
+
+## 2026-07-16 - TikTok API Rejected Low-FPS Preview Draft
+
+- **Phase:** 8.6
+- **Symptom:** The first official TikTok `FILE_UPLOAD` attempt reached TikTok
+  but status polling returned `FAILED` with `frame_rate_check_failed`.
+- **Cause:** The approved draft had been produced through the Telegram preview
+  path at 12 fps. TikTok's Content Posting API accepted the upload request but
+  rejected the MP4 during media validation.
+- **Fix:** Re-rendered the approved manifest as a full 30 fps publish-ready MP4
+  and retried the upload. The second attempt reached `SEND_TO_USER_INBOX`.
+  `uploads send` now re-renders the latest approved manifest with
+  `preview=False` before calling TikTok.
+- **Prevention:** Never send Telegram preview MP4s to TikTok's API. Official
+  API upload commands must produce or verify a publish-ready MP4 first,
+  including TikTok-safe frame rate, H.264 video, AAC audio, 9:16 layout, and
+  non-empty file output.

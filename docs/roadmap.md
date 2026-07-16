@@ -119,6 +119,8 @@ Implemented behavior:
   `/v2/post/publish/inbox/video/init/` endpoint.
 - TikTok `publish_id` values are stored as provider references for
   `tiktok_api_file_upload` attempts.
+- Before TikTok API upload, the latest approved manifest is rendered as a full
+  publish-ready MP4 instead of sending the lower-FPS Telegram preview draft.
 - Status checks record local success for `SEND_TO_USER_INBOX` or
   `PUBLISH_COMPLETE`, and local failure for `FAILED`.
 - CLI auth/status outputs are redacted and never print access tokens, refresh
@@ -141,6 +143,7 @@ Acceptance criteria:
   production job.
 - Failed uploads leave enough local error detail to retry safely.
 - Re-running the upload command does not duplicate a successful upload.
+- Official TikTok API uploads use publish-ready media, not preview renders.
 - Tests cover approval gating, idempotency, and upload-attempt persistence.
 
 ## Current Boundary
