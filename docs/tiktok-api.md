@@ -61,6 +61,10 @@ Send the approved MP4 through TikTok FILE_UPLOAD:
 python -m tiktok_trivia_factory uploads send --job-id JOB_ID
 ```
 
+Before the API call, the command re-renders the latest approved manifest as a
+full publish-ready MP4 instead of using the faster low-FPS Telegram preview
+draft. This avoids TikTok frame-rate validation failures.
+
 Check TikTok processing status:
 
 ```powershell

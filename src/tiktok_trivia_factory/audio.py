@@ -4,6 +4,7 @@ import json
 import math
 import platform
 import subprocess
+import tempfile
 import wave
 from array import array
 from pathlib import Path
@@ -149,23 +150,29 @@ $synth.Speak($Text)
 $synth.Dispose()
 """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
-        [
-            "powershell",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-            text,
-            str(output_path),
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=60,
-        check=False,
-    )
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".ps1", delete=False) as script_file:
+        script_file.write(script)
+        script_path = Path(script_file.name)
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+                text,
+                str(output_path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    finally:
+        script_path.unlink(missing_ok=True)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "PowerShell speech synthesis failed"
         raise AudioRenderError(detail)

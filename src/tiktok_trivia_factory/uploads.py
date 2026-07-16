@@ -8,13 +8,16 @@ from pathlib import Path
 from .models import DraftArtifact, Idea, ProductionJob, SourceCitation, UploadAttempt, VideoScript
 from .repository import (
     get_latest_upload_attempt,
+    get_latest_render_manifest,
     get_latest_video_script,
     get_successful_upload_attempt,
     list_approved_jobs_with_drafts,
     list_source_citations,
     list_upload_attempts,
+    save_draft_artifact,
     save_upload_attempt,
 )
+from .renderer import RenderError, render_manifest_to_mp4
 from .tiktok_api import (
     TikTokApiError,
     ensure_access_token,
@@ -209,6 +212,26 @@ def send_approved_draft_to_tiktok(
             message="Dry run only. No TikTok API request was made.",
         )
 
+    try:
+        candidate = _render_publish_ready_draft(db_path, candidate)
+    except RenderError as error:
+        failure_attempt = save_upload_attempt(
+            db_path,
+            job_id=candidate.job.id,
+            provider=TIKTOK_API_UPLOAD_PROVIDER,
+            status="failed",
+            error_message=f"Publish-ready render failed: {error}",
+        )
+        return TikTokSendResult(
+            candidate=candidate,
+            attempt=failure_attempt,
+            publish_id=None,
+            status="failed",
+            dry_run=False,
+            reused_existing_pending=False,
+            message=f"Publish-ready render failed: {error}",
+        )
+
     draft_path = Path(candidate.draft.path)
     try:
         credentials = load_tiktok_credentials()
@@ -366,6 +389,28 @@ def mark_upload_failed(
         provider=provider,
         status="failed",
         error_message=message,
+    )
+
+
+def _render_publish_ready_draft(db_path: Path, candidate: UploadCandidate) -> UploadCandidate:
+    manifest = get_latest_render_manifest(db_path, candidate.job.id)
+    if manifest is None:
+        return candidate
+
+    output_path = Path(candidate.draft.path)
+    render_manifest_to_mp4(manifest.manifest_json, output_path, preview=False)
+    draft = save_draft_artifact(
+        db_path,
+        job_id=candidate.job.id,
+        revision=manifest.revision,
+        artifact_type="mp4",
+        path=str(output_path),
+    )
+    return UploadCandidate(
+        job=candidate.job,
+        idea=candidate.idea,
+        draft=draft,
+        latest_attempt=candidate.latest_attempt,
     )
 
 
