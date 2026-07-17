@@ -1,8 +1,9 @@
 # TikTok API Upload Setup
 
-Phase 8.6 adds a CLI-first official TikTok Content Posting API upload path.
-It uploads only approved MP4 drafts to the TikTok inbox/draft flow. It does not
-enable Direct Post and does not public-post automatically.
+Phase 8.6 adds an official TikTok Content Posting API upload path. It uploads
+only approved MP4 drafts to the TikTok inbox/draft flow from either the CLI or
+an explicit Telegram command. It does not enable Direct Post and does not
+public-post automatically.
 
 ## Local Configuration
 
@@ -71,14 +72,27 @@ Check TikTok processing status:
 python -m tiktok_trivia_factory uploads check JOB_ID
 ```
 
+Equivalent explicit Telegram commands:
+
+```powershell
+python -m tiktok_trivia_factory telegram handle "send approved to TikTok"
+python -m tiktok_trivia_factory telegram handle "send approved to TikTok JOB_ID"
+python -m tiktok_trivia_factory telegram handle "check TikTok upload JOB_ID"
+```
+
 Expected TikTok success states are `SEND_TO_USER_INBOX` and
 `PUBLISH_COMPLETE`. For the default inbox flow, the operator still finishes
 reviewing/editing/posting inside TikTok after the upload is accepted.
+`SEND_TO_USER_INBOX` means TikTok says it sent a creator inbox notification; it
+does not mean the clip is already visible as a profile draft or public post.
+Open the authorized account's TikTok inbox/system notifications and complete
+TikTok's editing flow there.
 
 ## Boundary
 
 - Only approved drafts are selectable.
 - Successful uploads remove the draft from the awaiting-upload list.
 - Failed uploads are recorded and remain retryable.
-- Existing Telegram upload commands remain manual handoff commands for now.
+- `upload approved` remains the manual Telegram handoff command.
+- `send approved to TikTok [JOB_ID]` is the explicit Telegram API upload command.
 - Direct Post stays disabled unless explicitly added in a later phase.

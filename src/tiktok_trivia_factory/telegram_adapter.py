@@ -19,6 +19,7 @@ from .repository import (
     get_idea,
     get_latest_draft_artifact,
     get_latest_render_manifest,
+    get_latest_video_script,
     list_ideas,
     save_draft_artifact,
     save_render_manifest,
@@ -33,12 +34,15 @@ from .review import (
     revise_active_review,
 )
 from .script_generator import GeneratedScript, UnsupportedTopicError, generate_script
+from .trivia_bank import TriviaBankError, consume_bank_topic_from_script
 from .uploads import (
     UploadError,
+    check_tiktok_upload_status,
     get_upload_status,
     mark_upload_failed,
     mark_upload_succeeded,
     prepare_upload_packet,
+    send_approved_draft_to_tiktok,
     start_upload_handoff,
 )
 
@@ -64,6 +68,7 @@ def handle_review_message(
     message: str,
     watermark_text: str = "Trivia Clip Factory",
     voiceover_provider: str = "none",
+    trivia_bank_path: Path | None = None,
 ) -> TelegramCommandResult:
     text = message.strip()
     normalized = text.lower()
@@ -78,6 +83,21 @@ def handle_review_message(
             return _uploads_status(db_path)
         if normalized in {"upload packet", "prepare upload", "prepare upload packet", "uploads prepare"}:
             return _upload_packet(db_path, artifacts_dir)
+        tiktok_send_job = _tiktok_upload_send_from_message(text)
+        if tiktok_send_job is not None:
+            return _send_to_tiktok(db_path, artifacts_dir, tiktok_send_job)
+        if normalized in {
+            "upload to tiktok",
+            "send to tiktok",
+            "send approved to tiktok",
+            "send approved draft to tiktok",
+            "tiktok upload approved",
+            "upload approved to tiktok",
+        }:
+            return _send_to_tiktok(db_path, artifacts_dir)
+        upload_check = _tiktok_upload_check_from_message(text)
+        if upload_check is not None:
+            return _check_tiktok_upload(db_path, artifacts_dir, upload_check)
         if normalized in {"uploads next", "upload next", "upload approved", "upload approved draft"}:
             return _upload_next(db_path)
         upload_confirm = _upload_confirm_from_message(text)
@@ -97,7 +117,7 @@ def handle_review_message(
         if normalized.startswith("idea:"):
             return _save_idea(db_path, text[len("idea:") :].strip())
         if normalized == "produce next":
-            return _produce(db_path, artifacts_dir, None, watermark_text, voiceover_provider)
+            return _produce(db_path, artifacts_dir, None, watermark_text, voiceover_provider, trivia_bank_path)
         if normalized.startswith("produce "):
             return _produce(
                 db_path,
@@ -105,6 +125,7 @@ def handle_review_message(
                 text[len("produce ") :].strip(),
                 watermark_text,
                 voiceover_provider,
+                trivia_bank_path,
             )
         if normalized in {"cancel active", "cancel job"}:
             return _cancel_active(db_path)
@@ -118,7 +139,7 @@ def handle_review_message(
         if normalized in {"confirm discard active", "confirm discard job"}:
             return _discard_active(db_path)
         if normalized in {"regenerate active", "regenerate draft"}:
-            return _regenerate_active(db_path, artifacts_dir, watermark_text, voiceover_provider)
+            return _regenerate_active(db_path, artifacts_dir, watermark_text, voiceover_provider, trivia_bank_path)
         clear_scope = _clear_scope_from_message(normalized)
         if clear_scope is not None:
             return _clear_confirmation_prompt(clear_scope)
@@ -142,9 +163,13 @@ def handle_review_message(
             )
         if normalized in {"approve", "approve draft", "approved"}:
             event = approve_active_review(db_path)
+            bank_note = _consume_approved_bank_topic(db_path, event.job_id)
             return TelegramCommandResult(
                 ok=True,
-                message=f"Approved draft for job {event.job_id}. Publishing remains blocked until the upload phase.",
+                message=(
+                    f"Approved draft for job {event.job_id}. Publishing remains blocked until the upload phase."
+                    f"{bank_note}"
+                ),
             )
         if normalized in {"reject", "reject draft", "rejected"}:
             event = reject_active_review(db_path)
@@ -166,6 +191,7 @@ def handle_review_message(
         text=text,
         watermark_text=watermark_text,
         voiceover_provider=voiceover_provider,
+        trivia_bank_path=trivia_bank_path,
     )
     if conversational_result is not None:
         return conversational_result
@@ -192,6 +218,8 @@ def _help_message() -> str:
         "- uploads status\n"
         "- upload packet\n"
         "- upload approved\n"
+        "- send approved to TikTok [JOB_ID]\n"
+        "- check TikTok upload JOB_ID\n"
         "- discard active\n"
         "- clear ideas\n"
         "\nYou can also ask naturally, like show me status or save 15 NBA Finals trivia questions."
@@ -204,6 +232,7 @@ def _handle_conversational_message(
     text: str,
     watermark_text: str,
     voiceover_provider: str,
+    trivia_bank_path: Path | None,
 ) -> TelegramCommandResult | None:
     commands = _conversation_commands(text)
     if not commands:
@@ -218,6 +247,7 @@ def _handle_conversational_message(
                 message=command,
                 watermark_text=watermark_text,
                 voiceover_provider=voiceover_provider,
+                trivia_bank_path=trivia_bank_path,
             )
         )
     return _combine_conversation_results(results)
@@ -282,6 +312,8 @@ def _simple_conversation_commands(normalized: str) -> list[tuple[int, str]]:
     _append_match(candidates, normalized, r"\b(?:approve|approved|accept|looks good|good to go)\b", "approve")
     _append_match(candidates, normalized, r"\b(?:reject|rejected|decline|not good)\b", "reject")
     _append_match(candidates, normalized, r"\b(?:prepare|create|build|generate).{0,40}\bupload.{0,30}\b(?:packet|metadata|json)\b", "upload packet")
+    _append_match(candidates, normalized, r"\b(?:send|upload).{0,40}\b(?:approved|draft|video).{0,40}\btiktok\b", "send approved to TikTok")
+    _append_match(candidates, normalized, r"\btiktok.{0,40}\b(?:send|upload).{0,40}\b(?:approved|draft|video)\b", "send approved to TikTok")
     _append_match(candidates, normalized, r"\bupload.{0,40}\b(?:approved|next|tiktok|draft)\b", "upload approved")
     _append_match(candidates, normalized, r"\b(?:discard|get rid of).{0,40}\b(?:active|current|draft|job|task)\b", "discard active")
 
@@ -391,6 +423,28 @@ def _upload_failure_from_message(text: str) -> tuple[str, str] | None:
     return match.group("job_id"), match.group("error").strip()
 
 
+def _tiktok_upload_check_from_message(text: str) -> str | None:
+    match = re.fullmatch(
+        r"(?:check tiktok upload|tiktok upload status|check upload)\s+(?P<job_id>job_[a-f0-9]{12})",
+        text.strip(),
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    return match.group("job_id")
+
+
+def _tiktok_upload_send_from_message(text: str) -> str | None:
+    match = re.fullmatch(
+        r"(?:(?:send|upload)(?: approved(?: draft)?)? to tiktok|send approved(?: draft)? to tiktok)\s+(?P<job_id>job_[a-f0-9]{12})",
+        text.strip(),
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    return match.group("job_id")
+
+
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
 
@@ -434,9 +488,11 @@ def _unknown_direction_response() -> TelegramCommandResult:
             "10. uploads status\n"
             "11. upload packet\n"
             "12. upload approved\n"
-            "13. discard active\n"
-            "14. clear active\n"
-            "15. clear queued\n\n"
+            "13. send approved to TikTok [JOB_ID]\n"
+            "14. check TikTok upload JOB_ID\n"
+            "15. discard active\n"
+            "16. clear active\n"
+            "17. clear queued\n\n"
             "Examples:\n"
             "- save idea 10 trivia questions about FIFA World Cup\n"
             "- show me the status and save this idea of having 15 questions about NBA Finals statistics\n"
@@ -486,6 +542,67 @@ def _uploads_status(db_path: Path) -> TelegramCommandResult:
         lines.append(f"...and {len(status.candidates) - 10} more.")
     lines.append("Reply upload approved to hand off the oldest approved draft.")
     return TelegramCommandResult(ok=True, message="\n".join(lines))
+
+
+def _send_to_tiktok(db_path: Path, artifacts_dir: Path, job_id: str | None = None) -> TelegramCommandResult:
+    result = send_approved_draft_to_tiktok(
+        db_path,
+        data_dir=artifacts_dir.parent,
+        job_id=job_id,
+    )
+    job_id = result.candidate.job.id
+    publish_text = "" if result.publish_id is None else f"\nPublish ID: {result.publish_id}"
+    attempt_text = "" if result.attempt is None else f"\nUpload attempt: {result.attempt.id}"
+    if result.status == "failed":
+        return TelegramCommandResult(
+            ok=False,
+            message=(
+                "TikTok API upload failed.\n"
+                f"Job: {job_id}\n"
+                f"Status: {result.status}{publish_text}{attempt_text}\n"
+                f"Error: {result.message}"
+            ),
+        )
+
+    if result.reused_existing_pending:
+        next_step = f"Reply check TikTok upload {job_id}."
+    else:
+        next_step = "Open TikTok inbox/system notifications on the authorized account to finish the draft."
+    return TelegramCommandResult(
+        ok=True,
+        message=(
+            "TikTok API upload submitted.\n"
+            f"Job: {job_id}\n"
+            f"Status: {result.status}{publish_text}{attempt_text}\n"
+            f"{result.message}\n"
+            f"{next_step}"
+        ),
+    )
+
+
+def _check_tiktok_upload(db_path: Path, artifacts_dir: Path, job_id: str) -> TelegramCommandResult:
+    result = check_tiktok_upload_status(
+        db_path,
+        data_dir=artifacts_dir.parent,
+        job_id=job_id,
+    )
+    fail_text = "" if result.fail_reason is None else f"\nFailure: {result.fail_reason}"
+    local_text = "" if result.local_attempt is None else f"\nRecorded local attempt: {result.local_attempt.id}"
+    next_step = (
+        "Open TikTok inbox/system notifications on the authorized account to finish the draft."
+        if result.tiktok_status == "SEND_TO_USER_INBOX"
+        else "If still processing, check again in a minute."
+    )
+    return TelegramCommandResult(
+        ok=True,
+        message=(
+            "TikTok upload status checked.\n"
+            f"Job: {job_id}\n"
+            f"Publish ID: {result.publish_id}\n"
+            f"Status: {result.tiktok_status}{fail_text}{local_text}\n"
+            f"{next_step}"
+        ),
+    )
 
 
 def _upload_packet(db_path: Path, artifacts_dir: Path) -> TelegramCommandResult:
@@ -582,6 +699,7 @@ def _produce(
     idea_id: str | None,
     watermark_text: str,
     voiceover_provider: str,
+    trivia_bank_path: Path | None,
 ) -> TelegramCommandResult:
     try:
         active = get_active_job(db_path)
@@ -600,7 +718,7 @@ def _produce(
         if selected_idea is None:
             return TelegramCommandResult(ok=False, message="No queued ideas are available to produce.")
 
-        generated = generate_script(selected_idea.prompt)
+        generated = generate_script(selected_idea.prompt, trivia_bank_path=trivia_bank_path)
         job = start_job(db_path, selected_idea.id)
         draft = _render_new_draft_for_job(
             db_path=db_path,
@@ -609,6 +727,7 @@ def _produce(
             prompt=selected_idea.prompt,
             watermark_text=watermark_text,
             voiceover_provider=voiceover_provider,
+            trivia_bank_path=trivia_bank_path,
             generated_script=generated,
         )
     except (
@@ -639,6 +758,19 @@ def _select_idea(db_path: Path, idea_id: str | None) -> Idea | None:
         return get_idea(db_path, idea_id)
     queued = list_ideas(db_path, status="queued")
     return queued[0] if queued else None
+
+
+def _consume_approved_bank_topic(db_path: Path, job_id: str) -> str:
+    script = get_latest_video_script(db_path, job_id)
+    if script is None:
+        return ""
+    try:
+        consumed = consume_bank_topic_from_script(script.script_json, job_id=job_id, prompt="")
+    except (TriviaBankError, OSError, ValueError) as error:
+        return f"\nWarning: Could not mark trivia bank topic as used: {error}"
+    if consumed is None:
+        return ""
+    return f"\nMoved used bank topic to: {consumed.used_path}"
 
 
 def _cancel_active(db_path: Path) -> TelegramCommandResult:
@@ -705,6 +837,7 @@ def _regenerate_active(
     artifacts_dir: Path,
     watermark_text: str,
     voiceover_provider: str,
+    trivia_bank_path: Path | None,
 ) -> TelegramCommandResult:
     try:
         active = get_active_job(db_path)
@@ -718,6 +851,7 @@ def _regenerate_active(
             prompt=idea.prompt,
             watermark_text=watermark_text,
             voiceover_provider=voiceover_provider,
+            trivia_bank_path=trivia_bank_path,
         )
     except (
         NoActiveJobError,
@@ -778,9 +912,10 @@ def _render_new_draft_for_job(
     prompt: str,
     watermark_text: str,
     voiceover_provider: str = "none",
+    trivia_bank_path: Path | None = None,
     generated_script: GeneratedScript | None = None,
 ) -> DraftArtifact:
-    generated = generated_script or generate_script(prompt)
+    generated = generated_script or generate_script(prompt, trivia_bank_path=trivia_bank_path)
     script = save_video_script(
         db_path,
         job_id=job_id,

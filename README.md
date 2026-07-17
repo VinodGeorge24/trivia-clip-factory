@@ -71,6 +71,8 @@ trivia-factory telegram handle "approve"
 trivia-factory telegram handle "uploads status"
 trivia-factory telegram handle "upload packet"
 trivia-factory telegram handle "upload approved"
+trivia-factory telegram handle "send approved to TikTok JOB_ID"
+trivia-factory telegram handle "check TikTok upload JOB_ID"
 trivia-factory telegram handle "upload succeeded JOB_ID REFERENCE"
 trivia-factory telegram handle "upload failed JOB_ID REASON"
 trivia-factory telegram handle "discard active"
@@ -134,16 +136,36 @@ trivia-factory scripts generate
 trivia-factory scripts show
 ```
 
-The current generator is `local_seed`. It is free and offline, but deliberately
-limited to curated seed packs for:
+The script generator checks local sources before using any web/research
+fallback. Current provider order:
+
+1. Local trivia question bank text files.
+2. Local curated seed packs.
+3. Wikimedia/Wikipedia APIs for supported researched topics.
+4. Open Trivia DB for free no-key trivia fallback.
+5. Codex web search as a last-resort agent-mediated research fallback.
+6. Gemini web search as the final agent-mediated fallback.
+
+By default, the local trivia bank scans rewritten batch files under
+`var/trivia-rewrite/` and common final bank file names such as
+`trivia-questions.txt` or `triviaquestions.txt`. Set `TTF_TRIVIA_BANK_PATH` to
+point at a specific final text file or folder. When a Telegram prompt matches a
+bank topic, generated scripts use provider `local_trivia_bank` and store the
+source heading/path in script metadata and citations.
+
+When a bank-backed draft is approved, the matched topic block is removed from
+the source bank file and appended to `used-trivia-bank.txt` next to that source
+file with the job ID and prompt. Rejected or cancelled drafts do not consume
+the topic, so unused ideas can safely return to the queue.
+
+The curated seed-pack fallback is free and offline, but deliberately limited to:
 
 - FIFA World Cup
 - Led Zeppelin
 - grade-school science / Are You Smarter Than a 5th Grader style science
 
-Unsupported topics fail closed instead of producing unsupported facts. Later
-phases can add Codex/Gemini or web research providers behind the same script
-storage contract.
+Unsupported topics fail closed instead of producing unsupported facts unless a
+local bank topic or free research provider supports the prompt.
 
 Generated A/B/C choices are context-aware. Each question carries an
 `answer_type` such as country, year, person, award, album, or science concept.
@@ -152,16 +174,7 @@ gets country distractors, a year answer gets year distractors, and so on. Future
 web/model-backed providers should preserve that same contract instead of using
 random filler options.
 
-Phase 7 adds a free research-backed fallback chain for supported topics beyond
-the local seed packs. Current provider order:
-
-1. Local curated seed packs.
-2. Wikimedia/Wikipedia APIs for supported researched topics.
-3. Open Trivia DB for free no-key trivia fallback.
-4. Codex web search as a last-resort agent-mediated research fallback.
-5. Gemini web search as the final agent-mediated fallback.
-
-The local Python worker directly executes the first three providers. Codex and
+The local Python worker directly executes the first four providers. Codex and
 Gemini web search are represented in the provider chain for OpenClaw/agent
 handoff, but are not direct Python APIs in this repo yet.
 
@@ -267,6 +280,8 @@ Supported messages:
 - `uploads status`
 - `upload packet`
 - `upload approved`
+- `send approved to TikTok [JOB_ID]`
+- `check TikTok upload JOB_ID`
 - `upload succeeded JOB_ID REFERENCE`
 - `upload failed JOB_ID REASON`
 - `discard active`
@@ -275,9 +290,11 @@ Supported messages:
 - `clear queued`
 - `clear all`
 
-`produce next` starts the oldest queued idea, generates the local seed script,
-builds the render manifest, renders a preview MP4 draft, and returns the draft
-path for review. One active job is still enforced by SQLite.
+`produce next` starts the oldest queued idea, generates a script from the local
+trivia question bank when the prompt matches a bank topic, then falls back to
+local seed/research providers, builds the render manifest, renders a preview
+MP4 draft, and returns the draft path for review. One active job is still
+enforced by SQLite.
 `produce next`, `show draft`, and successful revision responses also return a
 `media_path` value so OpenClaw can attach the MP4 back into Telegram.
 
@@ -289,6 +306,7 @@ through the same safe command handlers. Examples:
 - `save this idea of having 15 questions about NBA Finals statistics`
 - `I have some ideas for production. Maybe we can do a short-form video asking 10 questions about Led Zeppelin.`
 - `please start the next queued video`
+- `send the approved draft to TikTok`
 - `can you get rid of the active draft?`
 - `please make it faster`
 
@@ -323,14 +341,17 @@ Phase 8.6 also adds the official sandbox API path. Configure `.env`, run
 inbox/drafts only; the operator still finishes review/posting inside TikTok.
 Use `trivia-factory uploads check JOB_ID` to refresh TikTok processing status.
 
-The Telegram upload commands remain the manual handoff surface. Use
-`upload approved` to start or show the oldest pending manual handoff; the
-response includes `media_path` so OpenClaw can attach the MP4. After the
-operator uploads the draft to TikTok inbox/drafts, reply
-`upload succeeded JOB_ID REFERENCE` or `upload failed JOB_ID REASON` to persist
-the result. Repeating a packet preparation or handoff reuses the existing
-pending attempt where possible, and repeating a success confirmation returns
-the existing successful attempt instead of duplicating it.
+Telegram has both manual and official API upload paths. Use `upload approved`
+to start or show the oldest pending manual handoff; the response includes
+`media_path` so OpenClaw can attach the MP4. Use
+`send approved to TikTok [JOB_ID]` to upload a specific approved draft through
+the official inbox API, or omit `JOB_ID` to send the oldest approved draft. Use
+`check TikTok upload JOB_ID` to refresh TikTok processing status. After a
+manual upload, reply `upload succeeded JOB_ID REFERENCE` or
+`upload failed JOB_ID REASON` to persist the result. Repeating a packet
+preparation or handoff reuses the existing pending attempt where possible, and
+repeating a success confirmation returns the existing successful attempt
+instead of duplicating it.
 
 For the full Telegram/OpenClaw operating contract, see
 [docs/openclaw-telegram.md](docs/openclaw-telegram.md). That document is the

@@ -11,6 +11,7 @@ DEFAULT_DB_PATH = "var/trivia_factory.sqlite3"
 DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_WATERMARK_TEXT = "Trivia Clip Factory"
 DEFAULT_VOICEOVER_PROVIDER = "none"
+DEFAULT_TRIVIA_BANK_PATH = ""
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 VALID_VOICEOVER_PROVIDERS = {"none", "windows_sapi"}
 
@@ -25,6 +26,7 @@ class Settings:
     log_level: str
     watermark_text: str
     voiceover_provider: str
+    trivia_bank_path: Path | None
 
 
 def load_settings(cwd: Path | None = None, environ: dict[str, str] | None = None) -> Settings:
@@ -37,6 +39,7 @@ def load_settings(cwd: Path | None = None, environ: dict[str, str] | None = None
     log_level = raw_env.get("TTF_LOG_LEVEL", DEFAULT_LOG_LEVEL).upper()
     watermark_text = raw_env.get("TTF_WATERMARK_TEXT", DEFAULT_WATERMARK_TEXT).strip()
     voiceover_provider = raw_env.get("TTF_VOICEOVER_PROVIDER", DEFAULT_VOICEOVER_PROVIDER).strip().lower()
+    trivia_bank_path = raw_env.get("TTF_TRIVIA_BANK_PATH", DEFAULT_TRIVIA_BANK_PATH).strip()
 
     if log_level not in VALID_LOG_LEVELS:
         raise ValueError(f"Invalid TTF_LOG_LEVEL: {log_level}")
@@ -52,6 +55,7 @@ def load_settings(cwd: Path | None = None, environ: dict[str, str] | None = None
         log_level=log_level,
         watermark_text=watermark_text or DEFAULT_WATERMARK_TEXT,
         voiceover_provider=voiceover_provider,
+        trivia_bank_path=None if not trivia_bank_path else _resolve_path(base_dir, trivia_bank_path),
     )
 
 

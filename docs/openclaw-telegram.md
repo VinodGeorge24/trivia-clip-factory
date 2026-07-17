@@ -16,8 +16,8 @@ This repository owns only the TikTok trivia workflow:
 - showing the current draft
 - applying supported revisions
 - approving or rejecting drafts
-- preparing approved drafts, running CLI TikTok API uploads, or handing approved
-  drafts to TikTok inbox upload and recording attempts
+- preparing approved drafts, running explicit TikTok API inbox uploads, or
+  handing approved drafts to TikTok inbox upload and recording attempts
 - regenerating the active draft with current local rules
 - discarding or clearing active/queued workflow state with confirmation
 
@@ -61,7 +61,7 @@ Use the same phrases in Telegram and local validation:
 | `status` | `python -m tiktok_trivia_factory telegram handle "status"` | Shows active job and queue state. |
 | `save idea PROMPT` | `python -m tiktok_trivia_factory telegram handle "save idea 10 trivia questions about FIFA World Cup"` | Saves a queued idea from Telegram. |
 | `ideas` | `python -m tiktok_trivia_factory telegram handle "ideas"` | Lists saved ideas and statuses. |
-| `produce next` | `python -m tiktok_trivia_factory telegram handle "produce next"` | Produces the oldest queued idea into a preview MP4 draft and returns `media_path`. |
+| `produce next` | `python -m tiktok_trivia_factory telegram handle "produce next"` | Produces the oldest queued idea into a preview MP4 draft and returns `media_path`; matching prompts use the local trivia question bank before seed/research fallbacks. |
 | `show draft` | `python -m tiktok_trivia_factory telegram handle "show draft"` | Shows the active draft path and returns `media_path`. |
 | `revise CHANGE` | `python -m tiktok_trivia_factory telegram handle "revise make it faster"` | Applies supported deterministic revisions, renders a new draft, and returns `media_path`. |
 | `regenerate active` | `python -m tiktok_trivia_factory telegram handle "regenerate active"` | Rebuilds the active script, manifest, and MP4 using current local generation/render rules. |
@@ -70,6 +70,8 @@ Use the same phrases in Telegram and local validation:
 | `uploads status` | `python -m tiktok_trivia_factory telegram handle "uploads status"` | Lists approved MP4 drafts awaiting TikTok upload handoff. |
 | `upload packet` | `python -m tiktok_trivia_factory telegram handle "upload packet"` | Writes a TikTok inbox upload packet and returns `media_path`. |
 | `upload approved` | `python -m tiktok_trivia_factory telegram handle "upload approved"` | Starts or shows the oldest pending upload handoff and returns `media_path`. |
+| `send approved to TikTok [JOB_ID]` | `python -m tiktok_trivia_factory telegram handle "send approved to TikTok JOB_ID"` | Uploads the selected approved draft, or the oldest approved draft when no job ID is provided, to the official TikTok API inbox flow. |
+| `check TikTok upload JOB_ID` | `python -m tiktok_trivia_factory telegram handle "check TikTok upload JOB_ID"` | Refreshes TikTok processing status for a previous API upload. |
 | `upload succeeded JOB_ID REFERENCE` | `python -m tiktok_trivia_factory telegram handle "upload succeeded JOB_ID REFERENCE"` | Marks the upload handoff succeeded with an optional provider reference. |
 | `upload failed JOB_ID REASON` | `python -m tiktok_trivia_factory telegram handle "upload failed JOB_ID REASON"` | Marks the upload handoff failed and stores the reason. |
 | `cancel active` | `python -m tiktok_trivia_factory telegram handle "cancel active"` | Cancels the active job and returns the idea to the queue. |
@@ -96,6 +98,7 @@ safe command handlers:
 | `please start the next queued video` | `produce next` |
 | `prepare an upload packet` | `upload packet` |
 | `please upload the approved draft` | `upload approved` |
+| `send the approved draft to TikTok` | `send approved to TikTok` |
 | `can you get rid of the active draft?` | `discard active` confirmation prompt. |
 | `please make it faster` | `revise make it faster` |
 
@@ -105,10 +108,32 @@ For narrow known ambiguity, the adapter may ask a clarification question. For
 example, broad NBA Finals trivia phrasing asks whether the user wants
 statistics trivia or player trivia before saving the idea.
 
+## Trivia Question Bank
+
+Telegram production is threaded into the local trivia question bank through the
+same `produce next` and `regenerate active` commands. The generator checks the
+bank before curated seed packs or free research providers.
+
+Default discovery checks rewritten batch files under `var/trivia-rewrite/` plus
+common final bank file names such as `trivia-questions.txt` and
+`triviaquestions.txt`. Set `TTF_TRIVIA_BANK_PATH` to a specific text file or
+folder when the final consolidated bank is ready.
+
+When a prompt such as `2 trivia questions about Minecraft mobs` matches a bank
+topic heading, the saved script uses provider `local_trivia_bank`, keeps the
+bank question text and A/B/C answers, and stores the source heading/path in
+metadata and citations.
+
+On `approve`, a bank-backed topic is consumed: the source topic block is moved
+out of the active bank file and appended to `used-trivia-bank.txt` beside that
+file with the job ID and prompt. `reject`, `cancel active`, and `discard active`
+do not consume the topic.
+
 If the adapter cannot parse a message, it returns a safe fallback with command
 formats such as `status`, `ideas`, `save idea PROMPT`, `produce next`,
 `show draft`, `revise CHANGE`, `regenerate active`, `approve`, `reject`,
-`uploads status`, `upload packet`, `upload approved`, `discard active`,
+`uploads status`, `upload packet`, `upload approved`,
+`send approved to TikTok [JOB_ID]`, `check TikTok upload JOB_ID`, `discard active`,
 `clear active`, and `clear queued`.
 
 `reject` and `cancel active` intentionally requeue the active idea. Use
@@ -182,19 +207,22 @@ ID. If upload fails, send `upload failed JOB_ID REASON`; the job remains
 eligible for retry because only a successful upload removes it from the
 awaiting-upload list.
 
-The official TikTok API runner is CLI-only in Phase 8.6:
+The official TikTok API runner can be called from the CLI or from explicit
+Telegram commands:
 
 ```powershell
 python -m tiktok_trivia_factory tiktok auth-listen
 python -m tiktok_trivia_factory uploads send --dry-run
 python -m tiktok_trivia_factory uploads send --job-id JOB_ID
 python -m tiktok_trivia_factory uploads check JOB_ID
+python -m tiktok_trivia_factory telegram handle "send approved to TikTok JOB_ID"
+python -m tiktok_trivia_factory telegram handle "check TikTok upload JOB_ID"
 ```
 
 These commands use the Content Posting API `FILE_UPLOAD` inbox flow and still
-require the operator to finish review/posting inside TikTok. Telegram commands
-do not trigger official API uploads yet; they remain the media handoff and
-manual outcome-recording surface.
+require the operator to finish review/posting inside TikTok. The manual
+Telegram handoff commands remain available separately for cases where the API
+path is unavailable.
 
 This phase does not public-post automatically and does not store TikTok
 credentials, browser cookies, or session data in packet files or Telegram
@@ -247,6 +275,8 @@ python -m tiktok_trivia_factory telegram handle "approve"
 python -m tiktok_trivia_factory telegram handle "uploads status"
 python -m tiktok_trivia_factory telegram handle "upload packet"
 python -m tiktok_trivia_factory telegram handle "upload approved"
+python -m tiktok_trivia_factory telegram handle "send approved to TikTok"
+python -m tiktok_trivia_factory telegram handle "check TikTok upload JOB_ID"
 python -m tiktok_trivia_factory telegram handle "upload succeeded JOB_ID REFERENCE"
 ```
 

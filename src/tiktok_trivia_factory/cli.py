@@ -397,6 +397,7 @@ def run_scripts_generate(
             idea.prompt,
             question_count=count,
             duration_seconds=duration_seconds,
+            trivia_bank_path=settings.trivia_bank_path,
         )
     except UnsupportedTopicError as error:
         print(str(error))
@@ -861,6 +862,7 @@ def run_telegram_handle(settings: Settings, message: str) -> int:
         message,
         watermark_text=settings.watermark_text,
         voiceover_provider=settings.voiceover_provider,
+        trivia_bank_path=settings.trivia_bank_path,
     )
     payload = {"ok": result.ok, "message": result.message}
     if result.media_path is not None:

@@ -19,6 +19,7 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(settings.db_path.name, "trivia_factory.sqlite3")
         self.assertEqual(settings.log_level, "INFO")
         self.assertEqual(settings.voiceover_provider, "none")
+        self.assertIsNone(settings.trivia_bank_path)
 
     def test_load_settings_accepts_windows_sapi_voiceover_provider(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -28,6 +29,15 @@ class FoundationTests(unittest.TestCase):
             )
 
         self.assertEqual(settings.voiceover_provider, "windows_sapi")
+
+    def test_load_settings_accepts_trivia_bank_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings = load_settings(
+                cwd=Path(temp_dir),
+                environ={"TTF_TRIVIA_BANK_PATH": "questions.txt"},
+            )
+
+        self.assertEqual(settings.trivia_bank_path, (Path(temp_dir) / "questions.txt").resolve())
 
     def test_database_initializes_schema(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

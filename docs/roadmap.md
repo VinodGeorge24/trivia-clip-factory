@@ -43,7 +43,8 @@ This roadmap tracks what is already implemented and what remains.
   TikTok sandbox OAuth session, save redacted-status token state under
   `var/tiktok/`, upload approved MP4 drafts through the official Content
   Posting API `FILE_UPLOAD` inbox flow, and check TikTok processing status.
-  Direct Post remains disabled and Telegram remains the manual handoff surface.
+  Explicit Telegram commands can also trigger and check the official inbox
+  upload path. Direct Post remains disabled.
 
 ## Remaining
 
@@ -111,6 +112,8 @@ Implemented behavior:
   `tiktok auth-refresh`.
 - CLI commands: `uploads send [--job-id JOB_ID] [--dry-run]` and
   `uploads check JOB_ID`.
+- Telegram commands: `send approved to TikTok [JOB_ID]` and
+  `check TikTok upload JOB_ID`.
 - TikTok OAuth config remains in local `.env`; token files live under
   `var/tiktok/` and are ignored by git.
 - `uploads send` selects only approved MP4 drafts with no successful upload
@@ -130,8 +133,8 @@ Current boundary:
 
 - The API path uploads to TikTok inbox/drafts only. The user still approves and
   posts inside TikTok.
-- Telegram does not trigger official API uploads yet; it continues to support
-  packet preparation, manual media handoff, and outcome recording.
+- Telegram requires an explicit API-upload command to trigger official TikTok
+  upload. The separate `upload approved` command remains manual media handoff.
 - Direct Post requires separate review, scope, UX, and operator approval before
   it should be added.
 
@@ -146,14 +149,22 @@ Acceptance criteria:
 - Official TikTok API uploads use publish-ready media, not preview renders.
 - Tests cover approval gating, idempotency, and upload-attempt persistence.
 
+Validation:
+
+- 2026-07-16: End-to-end Telegram command flow saved a bank-backed idea,
+  generated an MP4 from `local_trivia_bank`, approved `job_492ec2f22726`, sent
+  that exact job through the explicit TikTok API command, and reached
+  `SEND_TO_USER_INBOX`.
+
 ## Current Boundary
 
 The application can produce and review local MP4 drafts through Telegram and can
 research a narrow set of unsupported topics through free providers. Approved
 drafts can be handed off for TikTok inbox/manual upload or uploaded through the
-official TikTok API inbox flow from the CLI. The application does not yet fetch
-live analytics, synthesize voiceover, perform open-ended web research for every
-arbitrary topic automatically, or public-post directly to TikTok.
+official TikTok API inbox flow from the CLI or explicit Telegram command. The
+application does not yet fetch live analytics, synthesize voiceover, perform
+open-ended web research for every arbitrary topic automatically, or public-post
+directly to TikTok.
 
 ## Later Detail
 
@@ -210,3 +221,11 @@ The long-term operator goal is that Telegram can accept a request such as
 needed, produce an MP4 draft, hand approved media to the TikTok inbox/upload
 flow, and keep enough researched content available that the user mainly manages
 approval and direction.
+
+Current implementation note: Telegram script generation now checks the local
+trivia question bank before curated seed packs and research fallbacks. The
+active rewrite batches live under `var/trivia-rewrite/`; set
+`TTF_TRIVIA_BANK_PATH` to the final consolidated bank file or folder when the
+full bank is ready. Approved bank-backed drafts now move their matched topic
+from the active source file into a colocated `used-trivia-bank.txt` ledger, so
+the same topic is not selected again.

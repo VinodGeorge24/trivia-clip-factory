@@ -13,6 +13,7 @@ from tiktok_trivia_factory.repository import (
     start_job,
 )
 from tiktok_trivia_factory.script_generator import UnsupportedTopicError, generate_script
+from tiktok_trivia_factory.trivia_bank import consume_bank_topic, find_matching_bank_topic
 
 
 class ScriptGenerationTests(unittest.TestCase):
@@ -67,6 +68,7 @@ class ScriptGenerationTests(unittest.TestCase):
         generated = generate_script(
             "6 trivia questions about NBA Finals statistics",
             fetch_json=_fake_wikimedia_fetch,
+            trivia_bank_path=Path("__missing_trivia_bank__"),
         )
         payload = json.loads(generated.script_json)
 
@@ -84,6 +86,7 @@ class ScriptGenerationTests(unittest.TestCase):
         generated = generate_script(
             "3 trivia questions about basketball",
             fetch_json=_fake_wikimedia_failure_then_opentdb,
+            trivia_bank_path=Path("__missing_trivia_bank__"),
         )
         payload = json.loads(generated.script_json)
 
@@ -93,6 +96,58 @@ class ScriptGenerationTests(unittest.TestCase):
         self.assertEqual(payload["questions"][0]["answer"], "Basketball")
         self.assertEqual(len(payload["questions"][0]["choices"]), 3)
         self.assertEqual(generated.citations[0].source_type, "opentdb_api")
+
+    def test_generate_script_uses_matching_trivia_bank_topic_first(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bank_path = Path(temp_dir) / "trivia_bank.txt"
+            bank_path.write_text(_sample_trivia_bank(), encoding="utf-8")
+
+            generated = generate_script(
+                "2 trivia questions about Minecraft mobs",
+                trivia_bank_path=bank_path,
+            )
+            payload = json.loads(generated.script_json)
+
+        self.assertEqual(payload["provider"], "local_trivia_bank")
+        self.assertEqual(payload["generation_mode"], "local_trivia_bank")
+        self.assertEqual(payload["topic"], "Minecraft Mobs")
+        self.assertEqual(payload["questions"][0]["question"], "Which mob explodes when it gets close to the player?")
+        self.assertEqual(payload["questions"][0]["answer"], "Creeper")
+        self.assertEqual(payload["questions"][1]["correct_choice_label"], "B")
+        self.assertEqual(generated.citations[0].source_type, "local_trivia_bank")
+
+    def test_consumed_trivia_bank_topic_moves_to_used_file_and_stops_matching(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bank_path = Path(temp_dir) / "trivia_bank.txt"
+            bank_path.write_text(_sample_trivia_bank(), encoding="utf-8")
+            topic = find_matching_bank_topic("Minecraft mobs trivia", bank_path)
+            if topic is None:
+                raise AssertionError("Expected matching bank topic")
+
+            consumed = consume_bank_topic(topic, job_id="job_test123456", prompt="Minecraft mobs trivia")
+            source_text = bank_path.read_text(encoding="utf-8")
+            used_text = consumed.used_path.read_text(encoding="utf-8")
+            rematch = find_matching_bank_topic("Minecraft mobs trivia", bank_path)
+
+        self.assertNotIn("001. [Gaming - Minecraft Mobs]", source_text)
+        self.assertIn("001. [Gaming - Minecraft Mobs]", used_text)
+        self.assertIn("# Job: job_test123456", used_text)
+        self.assertIn("Which mob explodes when it gets close to the player?", used_text)
+        self.assertIsNone(rematch)
+
+    def test_trivia_bank_matching_rejects_wrong_era_after_topic_is_consumed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bank_path = Path(temp_dir) / "trivia_bank.txt"
+            bank_path.write_text(_sample_era_bank(), encoding="utf-8")
+            topic = find_matching_bank_topic("NFL Super Bowl Winners 2010s trivia", bank_path)
+            if topic is None:
+                raise AssertionError("Expected matching 2010s bank topic")
+
+            consume_bank_topic(topic, job_id="job_test123456", prompt="NFL Super Bowl Winners 2010s trivia")
+            rematch = find_matching_bank_topic("NFL Super Bowl Winners 2010s trivia", bank_path)
+
+        self.assertEqual(topic.heading, "085. [Sports - NFL Super Bowl Winners (2010s)]")
+        self.assertIsNone(rematch)
 
     def test_save_script_and_citations_for_active_job(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -184,6 +239,64 @@ def _fake_wikimedia_failure_then_opentdb(url: str) -> dict[str, object]:
             ],
         }
     raise AssertionError(f"Unexpected URL: {url}")
+
+
+def _sample_trivia_bank() -> str:
+    return """001. [Gaming - Minecraft Mobs]
+Question:
+Which mob explodes when it gets close to the player?
+A. Zombie
+B. Skeleton
+C. Creeper
+Answer: C. Creeper
+
+Question:
+Which mob drops blaze rods?
+A. Ghast
+B. Blaze
+C. Enderman
+Answer: B. Blaze
+
+Question:
+Which neutral mob becomes hostile if you look at it?
+A. Enderman
+B. Villager
+C. Cow
+Answer: A. Enderman
+"""
+
+
+def _sample_era_bank() -> str:
+    return """084. [Sports - NFL Super Bowl Winners (2000s)]
+Question:
+Which team won Super Bowl XLIII?
+A. Pittsburgh Steelers
+B. New York Giants
+C. Indianapolis Colts
+Answer: A. Pittsburgh Steelers
+
+Question:
+Which Giants receiver caught the helmet catch?
+A. David Tyree
+B. Plaxico Burress
+C. Amani Toomer
+Answer: A. David Tyree
+
+085. [Sports - NFL Super Bowl Winners (2010s)]
+Question:
+Which team beat the Seahawks after Malcolm Butler's goal-line interception?
+A. New England Patriots
+B. Denver Broncos
+C. Atlanta Falcons
+Answer: A. New England Patriots
+
+Question:
+Which Saints quarterback was named MVP of Super Bowl XLIV?
+A. Drew Brees
+B. Peyton Manning
+C. Reggie Bush
+Answer: A. Drew Brees
+"""
 
 
 if __name__ == "__main__":

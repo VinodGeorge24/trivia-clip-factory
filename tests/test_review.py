@@ -10,6 +10,7 @@ from tiktok_trivia_factory.renderer import render_manifest_to_mp4
 from tiktok_trivia_factory.repository import (
     add_idea,
     get_active_job,
+    get_latest_video_script,
     get_latest_render_manifest,
     list_ideas,
     save_draft_artifact,
@@ -113,6 +114,70 @@ class ReviewTests(unittest.TestCase):
         self.assertTrue(status.ok)
         self.assertIn("Active job", status.message)
         self.assertIsNotNone(active)
+
+    def test_telegram_produce_next_uses_configured_trivia_bank(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            db_path = base_dir / "state.sqlite3"
+            artifacts_dir = base_dir / "artifacts"
+            bank_path = base_dir / "trivia_bank.txt"
+            bank_path.write_text(_sample_trivia_bank(), encoding="utf-8")
+
+            saved = handle_review_message(
+                db_path,
+                artifacts_dir,
+                "save idea 2 trivia questions about Minecraft mobs",
+            )
+            produced = handle_review_message(
+                db_path,
+                artifacts_dir,
+                "produce next",
+                trivia_bank_path=bank_path,
+            )
+            active = get_active_job(db_path)
+            if active is None:
+                raise AssertionError("Expected active job")
+            script = get_latest_video_script(db_path, active.id)
+            if script is None:
+                raise AssertionError("Expected saved video script")
+            payload = json.loads(script.script_json)
+
+        self.assertTrue(saved.ok)
+        self.assertTrue(produced.ok)
+        self.assertEqual(script.provider, "local_trivia_bank")
+        self.assertEqual(payload["topic"], "Minecraft Mobs")
+        self.assertEqual(payload["questions"][0]["answer"], "Creeper")
+
+    def test_telegram_approve_moves_used_trivia_bank_topic(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            db_path = base_dir / "state.sqlite3"
+            artifacts_dir = base_dir / "artifacts"
+            bank_path = base_dir / "trivia_bank.txt"
+            bank_path.write_text(_sample_trivia_bank(), encoding="utf-8")
+
+            handle_review_message(
+                db_path,
+                artifacts_dir,
+                "save idea 2 trivia questions about Minecraft mobs",
+            )
+            produced = handle_review_message(
+                db_path,
+                artifacts_dir,
+                "produce next",
+                trivia_bank_path=bank_path,
+            )
+            approved = handle_review_message(db_path, artifacts_dir, "approve")
+            source_text = bank_path.read_text(encoding="utf-8")
+            used_path = bank_path.parent / "used-trivia-bank.txt"
+            used_text = used_path.read_text(encoding="utf-8")
+
+        self.assertTrue(produced.ok)
+        self.assertTrue(approved.ok)
+        self.assertIn("Moved used bank topic", approved.message)
+        self.assertNotIn("001. [Gaming - Minecraft Mobs]", source_text)
+        self.assertIn("001. [Gaming - Minecraft Mobs]", used_text)
+        self.assertIn("Which mob explodes when it gets close to the player?", used_text)
 
     def test_telegram_revision_returns_video_media_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -413,6 +478,31 @@ def _create_reviewable_draft(temp_dir: Path):
     if summary.draft is None:
         raise AssertionError("Expected reviewable draft")
     return db_path, job.id, manifest, draft
+
+
+def _sample_trivia_bank() -> str:
+    return """001. [Gaming - Minecraft Mobs]
+Question:
+Which mob explodes when it gets close to the player?
+A. Zombie
+B. Skeleton
+C. Creeper
+Answer: C. Creeper
+
+Question:
+Which mob drops blaze rods?
+A. Ghast
+B. Blaze
+C. Enderman
+Answer: B. Blaze
+
+Question:
+Which neutral mob becomes hostile if you look at it?
+A. Enderman
+B. Villager
+C. Cow
+Answer: A. Enderman
+"""
 
 
 if __name__ == "__main__":

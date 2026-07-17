@@ -4,7 +4,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from tiktok_trivia_factory.models import UploadAttempt
 from tiktok_trivia_factory.repository import (
     add_idea,
     get_successful_upload_attempt,
@@ -17,6 +19,8 @@ from tiktok_trivia_factory.script_generator import generate_script
 from tiktok_trivia_factory.telegram_adapter import handle_review_message
 from tiktok_trivia_factory.uploads import (
     TIKTOK_API_UPLOAD_PROVIDER,
+    TikTokCheckResult,
+    TikTokSendResult,
     UPLOAD_PACKET_PROVIDER,
     UploadError,
     get_upload_status,
@@ -180,6 +184,104 @@ class UploadTests(unittest.TestCase):
         self.assertIn("Upload packet prepared", result.message)
         self.assertIn(str(packet_path), result.message)
         self.assertTrue(packet_exists)
+
+    def test_telegram_send_to_tiktok_invokes_official_api_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "state.sqlite3"
+            artifacts_dir = Path(temp_dir) / "artifacts"
+            job_id = _create_draft_job(db_path, Path(temp_dir), approved=True)
+            attempt = UploadAttempt(
+                id="upload_api_1",
+                job_id=job_id,
+                provider=TIKTOK_API_UPLOAD_PROVIDER,
+                status="succeeded",
+                provider_reference="publish_1",
+                error_message=None,
+                created_at="2026-07-16 00:00:00",
+                updated_at="2026-07-16 00:00:00",
+            )
+
+            with patch("tiktok_trivia_factory.telegram_adapter.send_approved_draft_to_tiktok") as mocked_send:
+                candidate = get_upload_status(db_path).candidates[0]
+                mocked_send.return_value = TikTokSendResult(
+                    candidate=candidate,
+                    attempt=attempt,
+                    publish_id="publish_1",
+                    status="SEND_TO_USER_INBOX",
+                    dry_run=False,
+                    reused_existing_pending=False,
+                    message="TikTok accepted the upload.",
+                )
+                result = handle_review_message(db_path, artifacts_dir, "send approved to TikTok")
+
+        self.assertTrue(result.ok)
+        self.assertIn("TikTok API upload submitted", result.message)
+        self.assertIn("SEND_TO_USER_INBOX", result.message)
+        mocked_send.assert_called_once_with(db_path, data_dir=artifacts_dir.parent, job_id=None)
+
+    def test_telegram_send_to_tiktok_can_target_job_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "state.sqlite3"
+            artifacts_dir = Path(temp_dir) / "artifacts"
+            job_id = _create_draft_job(db_path, Path(temp_dir), approved=True)
+            attempt = UploadAttempt(
+                id="upload_api_1",
+                job_id=job_id,
+                provider=TIKTOK_API_UPLOAD_PROVIDER,
+                status="succeeded",
+                provider_reference="publish_1",
+                error_message=None,
+                created_at="2026-07-16 00:00:00",
+                updated_at="2026-07-16 00:00:00",
+            )
+
+            with patch("tiktok_trivia_factory.telegram_adapter.send_approved_draft_to_tiktok") as mocked_send:
+                candidate = get_upload_status(db_path).candidates[0]
+                mocked_send.return_value = TikTokSendResult(
+                    candidate=candidate,
+                    attempt=attempt,
+                    publish_id="publish_1",
+                    status="SEND_TO_USER_INBOX",
+                    dry_run=False,
+                    reused_existing_pending=False,
+                    message="TikTok accepted the upload.",
+                )
+                result = handle_review_message(db_path, artifacts_dir, f"send approved to TikTok {job_id}")
+
+        self.assertTrue(result.ok)
+        self.assertIn("TikTok API upload submitted", result.message)
+        mocked_send.assert_called_once_with(db_path, data_dir=artifacts_dir.parent, job_id=job_id)
+
+    def test_telegram_check_tiktok_upload_invokes_status_api(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "state.sqlite3"
+            artifacts_dir = Path(temp_dir) / "artifacts"
+            job_id = _create_draft_job(db_path, Path(temp_dir), approved=True)
+            attempt = UploadAttempt(
+                id="upload_api_1",
+                job_id=job_id,
+                provider=TIKTOK_API_UPLOAD_PROVIDER,
+                status="pending",
+                provider_reference="publish_1",
+                error_message=None,
+                created_at="2026-07-16 00:00:00",
+                updated_at="2026-07-16 00:00:00",
+            )
+
+            with patch("tiktok_trivia_factory.telegram_adapter.check_tiktok_upload_status") as mocked_check:
+                mocked_check.return_value = TikTokCheckResult(
+                    attempt=attempt,
+                    publish_id="publish_1",
+                    tiktok_status="SEND_TO_USER_INBOX",
+                    fail_reason=None,
+                    local_attempt=None,
+                )
+                result = handle_review_message(db_path, artifacts_dir, f"check TikTok upload {job_id}")
+
+        self.assertTrue(result.ok)
+        self.assertIn("TikTok upload status checked", result.message)
+        self.assertIn("SEND_TO_USER_INBOX", result.message)
+        mocked_check.assert_called_once_with(db_path, data_dir=artifacts_dir.parent, job_id=job_id)
 
     def test_send_draft_phrase_does_not_create_upload_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

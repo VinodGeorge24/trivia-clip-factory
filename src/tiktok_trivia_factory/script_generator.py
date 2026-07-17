@@ -5,15 +5,18 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from html import unescape
+from pathlib import Path
 from urllib.parse import unquote
 from urllib.request import Request, urlopen
 
 from .models import SourceCitationDraft
+from .trivia_bank import BankTopic, find_matching_bank_topic
 
 
 DEFAULT_DURATION_SECONDS = 45
 DEFAULT_QUESTION_COUNT = 10
 PROVIDER = "local_seed"
+TRIVIA_BANK_PROVIDER = "local_trivia_bank"
 RESEARCH_WIKIPEDIA_PROVIDER = "research_wikipedia"
 RESEARCH_OPENTDB_PROVIDER = "research_opentdb"
 RESEARCH_CODEX_WEB_PROVIDER = "codex_web_search"
@@ -242,7 +245,12 @@ def generate_script(
     question_count: int | None = None,
     duration_seconds: int | None = None,
     fetch_json: FetchJson | None = None,
+    trivia_bank_path: Path | None = None,
 ) -> GeneratedScript:
+    bank_topic = find_matching_bank_topic(prompt, trivia_bank_path)
+    if bank_topic is not None:
+        return _generate_trivia_bank_script(prompt, bank_topic, question_count, duration_seconds)
+
     try:
         pack = _select_topic_pack(prompt)
     except UnsupportedTopicError:
@@ -303,6 +311,83 @@ def generate_script(
         script_json=json.dumps(payload, indent=2, sort_keys=True),
         provider=PROVIDER,
         confidence=0.72,
+        citations=[citation],
+    )
+
+
+def _generate_trivia_bank_script(
+    prompt: str,
+    topic: BankTopic,
+    question_count: int | None,
+    duration_seconds: int | None,
+) -> GeneratedScript:
+    requested_count = question_count or _parse_question_count(prompt) or DEFAULT_QUESTION_COUNT
+    count = max(1, min(requested_count, len(topic.questions)))
+    duration = duration_seconds or DEFAULT_DURATION_SECONDS
+    citation_label = f"trivia_bank_{topic.number}"
+
+    questions = []
+    for index, bank_question in enumerate(topic.questions[:count], start=1):
+        choices = [
+            {
+                "label": label,
+                "text": text,
+                "is_correct": label == bank_question.correct_label,
+            }
+            for label, text in bank_question.choices
+        ]
+        questions.append(
+            {
+                "id": f"q{index:02d}",
+                "format": DEFAULT_FORMAT,
+                "question": bank_question.question,
+                "answer": bank_question.answer,
+                "answer_type": "trivia_bank_answer",
+                "choices": choices,
+                "correct_choice_label": bank_question.correct_label,
+                "explanation": f"The correct answer is {bank_question.answer}.",
+                "difficulty": _bank_difficulty(index),
+                "confidence": 0.7,
+                "citation_labels": [citation_label],
+                "on_screen_text": bank_question.question,
+                "voiceover": (
+                    f"Question {index}. {bank_question.question} "
+                    f"Answer: {bank_question.answer}."
+                ),
+            }
+        )
+
+    payload = {
+        "schema_version": 1,
+        "provider": TRIVIA_BANK_PROVIDER,
+        "generation_mode": "local_trivia_bank",
+        "format": DEFAULT_FORMAT,
+        "supported_formats": list(SUPPORTED_FORMATS),
+        "topic": topic.title,
+        "prompt": prompt.strip(),
+        "target_duration_seconds": duration,
+        "hook": f"{topic.title} trivia. Keep score through all {count} questions.",
+        "questions": questions,
+        "caption": f"{topic.title} trivia challenge: {count} questions. Drop your score.",
+        "hashtags": _bank_hashtags(topic),
+        "metadata": {
+            "question_count": count,
+            "needs_external_research": False,
+            "trivia_bank_heading": topic.heading,
+            "trivia_bank_source": str(topic.source_path),
+            "suitability_notes": "Local trivia bank script. Review preserved source questions before publishing.",
+        },
+    }
+    citation = SourceCitationDraft(
+        label=citation_label,
+        source_type="local_trivia_bank",
+        reference=f"{topic.heading} from {topic.source_path}",
+        confidence=0.7,
+    )
+    return GeneratedScript(
+        script_json=json.dumps(payload, indent=2, sort_keys=True),
+        provider=TRIVIA_BANK_PROVIDER,
+        confidence=0.7,
         citations=[citation],
     )
 
@@ -661,6 +746,25 @@ def _parse_question_count(prompt: str) -> int | None:
     if match is None:
         return None
     return int(match.group(1))
+
+
+def _bank_difficulty(index: int) -> str:
+    if index <= 3:
+        return "easy"
+    if index <= 7:
+        return "medium"
+    return "hard"
+
+
+def _bank_hashtags(topic: BankTopic) -> list[str]:
+    tags = ["#trivia", "#quiz"]
+    category = re.sub(r"[^a-z0-9]+", "", topic.category.casefold())
+    if category:
+        tags.append(f"#{category}")
+    for token in re.findall(r"[a-z0-9]+", topic.title.casefold()):
+        if len(token) >= 3 and len(tags) < 5:
+            tags.append(f"#{token}")
+    return tags
 
 
 def _build_choices(fact: TriviaFact, pack: TopicPack, index: int) -> tuple[list[dict[str, object]], str]:

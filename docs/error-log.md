@@ -166,3 +166,34 @@ teaches us something useful.
   API upload commands must produce or verify a publish-ready MP4 first,
   including TikTok-safe frame rate, H.264 video, AAC audio, 9:16 layout, and
   non-empty file output.
+
+## 2026-07-16 - Telegram Upload Command Was Manual-Only
+
+- **Phase:** 8.6
+- **Symptom:** The intended operator flow was "Telegram produce, approve, send
+  to TikTok," but `upload approved` only created a manual handoff and did not
+  call the official TikTok API.
+- **Cause:** The API upload runner existed in the CLI, while Telegram still
+  exposed only packet/manual handoff commands.
+- **Fix:** Added explicit Telegram commands `send approved to TikTok [JOB_ID]`
+  and `check TikTok upload JOB_ID`, backed by the same official API functions
+  as the CLI.
+- **Prevention:** Keep manual handoff and live API upload commands separate in
+  docs and tests. Any Telegram wording that implies a live TikTok API action
+  must call the API path or fail clearly.
+
+## 2026-07-16 - TikTok Inbox Success Is Not A Profile Draft Yet
+
+- **Phase:** 8.6
+- **Symptom:** TikTok returned `SEND_TO_USER_INBOX`, but the mobile profile did
+  not show a draft or posted video.
+- **Cause:** TikTok's Upload API sends an inbox notification for the creator to
+  open and complete the editing flow. It is not equivalent to an already
+  profile-visible draft or public post.
+- **Fix:** Documented the operator expectation and verified successful uploads
+  by polling `/v2/post/publish/status/fetch/`, checking account identity, and
+  recording the `publish_id` in `upload_attempts`.
+- **Prevention:** After `SEND_TO_USER_INBOX`, check TikTok inbox/system
+  notifications on the authorized account, not only profile posts/drafts. Do
+  not mark this as a public post unless status later reaches `PUBLISH_COMPLETE`
+  after the user completes the TikTok flow.
